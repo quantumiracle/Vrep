@@ -1,0 +1,33 @@
+- a lot of codes in the beginning is reusable, which is good
+
+- lua functions need to be write in a library style so that it can be called from the python code
+
+- refer to this website 
+	http://www.coppeliarobotics.com/helpFiles/en/b0RemoteApi-python.htm
+	http://www.coppeliarobotics.com/helpFiles/en/remoteApiFunctionsPython.htm
+
+- pay attention to how they get the joint handle, then use it to control the arm
+
+joint_handles = [None] * 7
+for i in range(7):
+    return_code, handle = vrep.simxGetObjectHandle(client_id, 'Sawyer_joint' + str(i + 1), vrep.simx_opmode_blocking)
+    check_for_errors(return_code)
+    joint_handles[i] = handle
+
+# Set the target joint velocities
+        for i in range(7):
+            return_code = vrep.simxSetJointTargetVelocity(client_id, joint_handles[i], target_velocities[i], vrep.simx_opmode_oneshot)
+            check_for_errors(return_code)
+
+- so the code opens the simulation, then try to set the velocity of all joints to 0 
+
+===============================================================
+
+this will be how we tackle the using Q learning problem
+
+1. try to do it in a toy problem first
+	- torch + python + pygame/opencv
+
+2. when that works, we try to control the robotics arm by a keyboard
+
+3. when that works too, we do Q-learning on the robotics arm
