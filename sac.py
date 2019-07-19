@@ -27,8 +27,7 @@ import gzip
 
 import vrep_sawyer
 import simulator
-import tqdm
-import bbopt
+
 import sys
 
 if sys.version_info[0] < 3:
@@ -415,7 +414,7 @@ if __name__ == '__main__':
     sac_trainer=SAC_Trainer(replay_buffer, hidden_dim=hidden_dim, action_range=action_range  )
     
     if args.train:
-        sac_trainer.load_model( model_path)
+        # sac_trainer.load_model( model_path)
 
         # training loop
         for ep in range(max_episodes):

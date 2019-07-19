@@ -15,6 +15,8 @@ from PIL import Image
 import vrep_sawyer
 import simulator
 
+from sawyer_wrapper import Sawyer
+
 
 
 # from env import Reacher
@@ -223,6 +225,7 @@ class Worker(object):
             epr_set.append(ep_r)
             if step % 10==0:  # plot every N episode; some error about main thread for plotting
                 plt.plot(step_set,epr_set)  # no moving average
+                plt.ylim(0, 100)
                 try:
                     plt.savefig('./ppo_multi.png')
                 except:
@@ -235,6 +238,7 @@ if __name__ == '__main__':
     model_path = './model/ppo_multi'
     if args.train:
         GLOBAL_PPO = PPO()
+        GLOBAL_PPO.load(model_path)
         UPDATE_EVENT, ROLLING_EVENT = threading.Event(), threading.Event()
         UPDATE_EVENT.clear()            # not update now
         ROLLING_EVENT.set()             # start to roll out
@@ -271,19 +275,18 @@ if __name__ == '__main__':
         GLOBAL_PPO.save(model_path)
 
     if args.test:
-        # env = UnityEnv(env_name, worker_id=np.random.randint(0,10), use_visual=True, use_both=True)
-        env.reset()
+        env = Sawyer(headless=False) 
         GLOBAL_PPO = PPO()
         GLOBAL_PPO.load(model_path)
-        test_steps = 200
         test_episode = 10
         
 
         for _ in range(test_episode):
-            s, info = env.reset()
+            vs, s = env.reset()
  
-            for t in range(test_steps):
-                s, r, done, info = env.step(GLOBAL_PPO.choose_action(s))
+            for t in range(EP_LEN):
+                vs, s, r, done = env.step(GLOBAL_PPO.choose_action(s))
+                print(r)
      
 
 
