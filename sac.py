@@ -399,8 +399,8 @@ if __name__ == '__main__':
     # hyper-parameters for RL training
     max_episodes  = 20000
     max_steps   = 20   # Pendulum needs 150 steps per episode to learn well, cannot handle 20
-    batch_size  = 10
-    explore_eps = 2  # for random action sampling in the beginning of training
+    batch_size  = 128
+    explore_eps = 200  # for random action sampling in the beginning of training
     update_itr = 1
     AUTO_ENTROPY=True
     DETERMINISTIC=False
