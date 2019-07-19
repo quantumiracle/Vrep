@@ -9,8 +9,8 @@ import vrep_sawyer
 import simulator
 
 class Sawyer:
-    def __init__(self, dt = 100e-3 ):
-        r = vrep_sawyer.VrepSawyer(dt)
+    def __init__(self, dt = 100e-3 , id=0):
+        r = vrep_sawyer.VrepSawyer(dt, port_num=19990+int(id))
         self.action_space = np.zeros(6)
         self.observation_space = np.zeros(9)
         self.simulator = simulator.Simulator(r,dt,target_x=0,target_y=0,target_z=0,visualize=False)

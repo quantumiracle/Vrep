@@ -13,6 +13,7 @@ import gym
 import numpy as np
 
 import torch
+torch.multiprocessing.set_start_method('forkserver', force=True)
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
@@ -22,21 +23,18 @@ from IPython.display import clear_output
 import matplotlib.pyplot as plt
 from matplotlib import animation
 from IPython.display import display
+from sawyer_wrapper import Sawyer
+
 import argparse
-import gzip
+import time
 
-import vrep_sawyer
-import simulator
-import tqdm
-import bbopt
-import sys
+import torch.multiprocessing as mp
+from torch.multiprocessing import Process
 
-if sys.version_info[0] < 3:
-    print("Python2")
-    import cPickle
-else:
-    print("Python3")
-    import pickle as cPickle
+from multiprocessing import Process, Manager
+from multiprocessing.managers import BaseManager
+
+import threading as td
 
 GPU = True
 device_idx = 0
@@ -77,7 +75,10 @@ class ReplayBuffer:
         '''
         return state, action, reward, next_state, done
     
-    def __len__(self):
+    def __len__(self):  # cannot work in multiprocessing case, len(replay_buffer) is not available in proxy of manager!
+        return len(self.buffer)
+
+    def get_length(self):
         return len(self.buffer)
 
 class NormalizedActions(gym.ActionWrapper):
@@ -99,12 +100,6 @@ class NormalizedActions(gym.ActionWrapper):
         
         return action
 
-def plot(rewards):
-    clear_output(True)
-    plt.figure(figsize=(20,5))
-    plt.plot(rewards)
-    plt.savefig('sac_v2.png')
-    # plt.show()
 
 class ValueNetwork(nn.Module):
     def __init__(self, state_dim, hidden_dim, init_w=3e-3):
@@ -252,10 +247,9 @@ class SAC_Trainer():
         self.alpha_optimizer = optim.Adam([self.log_alpha], lr=alpha_lr)
 
     
-    def update(self, batch_size, reward_scale=10., use_demonstration=False, auto_entropy=True, target_entropy=-2, gamma=0.99,soft_tau=1e-2):
-        state, action, reward, next_state, done = self.replay_buffer.sample(int(batch_size/2))
-        # print('sample:', state, action,  reward, done)  # 2D: state, action  1D: reward, done
-
+    def update(self, batch_size, reward_scale=10., auto_entropy=True, target_entropy=-2, gamma=0.99,soft_tau=1e-2):
+        state, action, reward, next_state, done = self.replay_buffer.sample(batch_size)
+        # print('sample:', state, action,  reward, done)
 
         state      = torch.FloatTensor(state).to(device)
         next_state = torch.FloatTensor(next_state).to(device)
@@ -263,44 +257,11 @@ class SAC_Trainer():
         reward     = torch.FloatTensor(reward).unsqueeze(1).to(device)  # reward is single value, unsqueeze() to add one dim to be [reward] at the sample dim;
         done       = torch.FloatTensor(np.float32(done)).unsqueeze(1).to(device)
 
-        if use_demonstration: 
-            # sample from demonstration data
-            with gzip.open('dataset/replay_02.gz', 'rb') as handle:
-                if sys.version_info[0] < 3:
-                    demonstration_data = cPickle.load(handle)
-                    transitions = demonstration_data.sample(int(batch_size/2)) 
-                    for i in range(len(transitions)):
-                        if transitions[i].next_numerical_state is not None:
-                            state = torch.cat((state, transitions[i].numerical_state.unsqueeze(0).to(device)), 0)
-                            next_state = torch.cat((next_state, transitions[i].next_numerical_state.unsqueeze(0).to(device)), 0)
-                            action = torch.cat((action, transitions[i].action.unsqueeze(0).to(device)), 0)
-                            reward = torch.cat((reward, transitions[i].reward.unsqueeze(1).to(device)), 0)
-                            done = torch.cat((done, torch.FloatTensor([[1]]).to(device)), 0)
-                else:
-                    demonstration_data = cPickle.load(handle, encoding='bytes')
-                # print(demonstration_data.__dict__)
-                # after using bytes encoding, needs to decode with b'key' on dictionary
-                # print('second: ', demonstration_data.__dict__[b'memory'][10].numerical_state)  
-            for i in range(int(batch_size/2)):
-                idx=np.random.randint(0,len(demonstration_data.__dict__[b'memory']))
-                if demonstration_data.__dict__[b'memory'][idx].next_numerical_state is not None:
-                    state = torch.cat((state, demonstration_data.__dict__[b'memory'][idx].numerical_state.unsqueeze(0).to(device)), 0)
-                    next_state = torch.cat((next_state, demonstration_data.__dict__[b'memory'][idx].next_numerical_state.unsqueeze(0).to(device)), 0)
-                    action = torch.cat((action, demonstration_data.__dict__[b'memory'][idx].action.unsqueeze(0).to(device)), 0)
-                    reward = torch.cat((reward, demonstration_data.__dict__[b'memory'][idx].reward.unsqueeze(1).to(device)), 0)
-                    done = torch.cat((done, torch.FloatTensor([[1]]).to(device)), 0)
-
-            # print('sample:', state, action, next_state,  reward, done)  # 2D: state, action, next_state  1D: reward, done
-
-
-
-
         predicted_q_value1 = self.soft_q_net1(state, action)
         predicted_q_value2 = self.soft_q_net2(state, action)
         new_action, log_prob, z, mean, log_std = self.policy_net.evaluate(state)
         new_next_action, next_log_prob, _, _, _ = self.policy_net.evaluate(next_state)
-
-        reward = reward_scale * (reward - reward.mean(dim=0)) /(reward.std(dim=0) + 1e-6)# normalize with batch mean and std
+        reward = reward_scale * (reward - reward.mean(dim=0)) / (reward.std(dim=0) + 1e-6) # normalize with batch mean and std; plus a small number to prevent numerical problem
     # Updating alpha wrt entropy
         # alpha = 0.0  # trade-off between exploration (max entropy) and exploitation (max Q) 
         if auto_entropy is True:
@@ -352,152 +313,188 @@ class SAC_Trainer():
         return predicted_new_q_value.mean()
 
     def save_model(self, path):
-        torch.save({'soft_q_net1': self.soft_q_net1.state_dict(), 
-        'soft_q_net2': self.soft_q_net2.state_dict(),
-        'target_soft_q_net1': self.target_soft_q_net1.state_dict(),
-        'target_soft_q_net2': self.target_soft_q_net2.state_dict(),
-        'policy_net': self.policy_net.state_dict()
-        }, 
-        path)
-        # save log-alpha variable
-        torch.save(self.log_alpha, path+'logalpha.pt')
+        torch.save(self.soft_q_net1.state_dict(), path+'_q1')
+        torch.save(self.soft_q_net2.state_dict(), path+'_q2')
+        torch.save(self.policy_net.state_dict(), path+'_policy')
 
     def load_model(self, path):
-        checkpoint = torch.load(path)
-        self.soft_q_net1.load_state_dict(checkpoint['soft_q_net1'])
-        self.soft_q_net2.load_state_dict(checkpoint['soft_q_net2'])
-        self.target_soft_q_net1.load_state_dict(checkpoint['target_soft_q_net1'])
-        self.target_soft_q_net2.load_state_dict(checkpoint['target_soft_q_net2'])
-        self.policy_net.load_state_dict(checkpoint['policy_net'])
+        self.soft_q_net1.load_state_dict(torch.load(path+'_q1'))
+        self.soft_q_net2.load_state_dict(torch.load(path+'_q2'))
+        self.policy_net.load_state_dict(torch.load(path+'_policy'))
 
-        self.log_alpha = torch.load(path+'logalpha.pt')
-        # for inference
         self.soft_q_net1.eval()
         self.soft_q_net2.eval()
-        self.target_soft_q_net1.eval()
-        self.target_soft_q_net2.eval()
         self.policy_net.eval()
 
-        # for re-training
-        # self.soft_q_net1.train()
-        # self.soft_q_net2.train()
-        # self.target_soft_q_net1.train()
-        # self.target_soft_q_net2.train()
-        # self.policy_net.train()
+
+def worker(id, sac_trainer, ENV, rewards_queue, replay_buffer, max_episodes, max_steps, batch_size, explore_steps, \
+            update_itr, AUTO_ENTROPY, DETERMINISTIC, hidden_dim, model_path):
+    '''
+    the function for sampling with multi-processing
+    '''
+
+    print(sac_trainer, replay_buffer)  # sac_tainer are not the same, but all networks and optimizers in it are the same; replay  buffer is the same one.
+    env = Sawyer(id=id+2)
+
+    action_dim = env.action_space.shape[0]
+    state_dim  = env.observation_space.shape[0]
+    action_range=1.
+
+
+    # training loop
+    for eps in range(max_episodes):
+        frame_idx=0
+        rewards=[]
+        episode_reward = 0
+        visual_state, state =  env.reset()
+        
+        for step in range(max_steps):
+            if frame_idx > explore_steps:
+                action = sac_trainer.policy_net.get_action(state, deterministic = DETERMINISTIC)
+            else:
+                action = sac_trainer.policy_net.sample_action()
+    
+            try:
+                next_visual_state, next_state, reward, done = env.step(action) 
+            except KeyboardInterrupt:
+                print('Finished')
+                sac_trainer.save_model(model_path)
+    
+            replay_buffer.push(state, action, reward, next_state, done)
+            
+            state = next_state
+            episode_reward += reward
+            frame_idx += 1
+            
+            
+            # if len(replay_buffer) > batch_size:
+            if replay_buffer.get_length() > batch_size:
+                for i in range(update_itr):
+                    _=sac_trainer.update(batch_size, reward_scale=10., auto_entropy=AUTO_ENTROPY, target_entropy=-1.*action_dim)
+            
+            if eps % 10 == 0 and eps>0:
+                # plot(rewards, id)
+                sac_trainer.save_model(model_path)
+            
+            if done:
+                break
+        print('Episode: ', eps, '| Episode Reward: ', episode_reward)
+        if len(rewards) == 0: rewards.append(episode_reward)
+        else: rewards.append(rewards[-1]*0.9+episode_reward*0.1)
+        rewards_queue.put(episode_reward)
+
+    sac_trainer.save_model(model_path)
+
+def ShareParameters(adamoptim):
+    ''' share parameters of Adamoptimizers for multiprocessing '''
+    for group in adamoptim.param_groups:
+        for p in group['params']:
+            state = adamoptim.state[p]
+            # initialize: have to initialize here, or else cannot find
+            state['step'] = 0
+            state['exp_avg'] = torch.zeros_like(p.data)
+            state['exp_avg_sq'] = torch.zeros_like(p.data)
+
+            # share in memory
+            state['exp_avg'].share_memory_()
+            state['exp_avg_sq'].share_memory_()
+            
+def plot(rewards):
+    clear_output(True)
+    plt.figure(figsize=(20,5))
+    plt.plot(rewards)
+    plt.savefig('sac_v2_multi.png')
+    # plt.show()
+    plt.clf()
+
+
+
+
 
 if __name__ == '__main__':
+
     replay_buffer_size = 1e6
-    replay_buffer = ReplayBuffer(replay_buffer_size)
+    # replay_buffer = ReplayBuffer(replay_buffer_size)
+
+    # the replay buffer is a class, have to use torch manager to make it a proxy for sharing across processes
+    BaseManager.register('ReplayBuffer', ReplayBuffer)
+    manager = BaseManager()
+    manager.start()
+    replay_buffer = manager.ReplayBuffer(replay_buffer_size)  # share the replay buffer through manager
+
 
     # choose env
-    model_path = './model/sac_model'
-    dt = 100e-3
-    r = vrep_sawyer.VrepSawyer(dt)
-    env = simulator.Simulator(r,dt,target_x=0,target_y=0,target_z=0,visualize=False)
-    action_dim = 6
-    state_dim = 9
+    env = Sawyer()
 
-    # hyper-parameters for RL training
-    max_episodes  = 20000
-    max_steps   = 20   # Pendulum needs 150 steps per episode to learn well, cannot handle 20
-    batch_size  = 10
-    explore_eps = 2  # for random action sampling in the beginning of training
+    action_dim = env.action_space.shape[0]
+    state_dim  = env.observation_space.shape[0]
+    action_range=1.
+
+    # hyper-parameters for RL training, no need for sharing across processes
+    max_episodes  = 100000
+    max_steps   = 20 
+    explore_steps = 200  # for random action sampling in the beginning of training
     update_itr = 1
     AUTO_ENTROPY=True
     DETERMINISTIC=False
-    USE_DEMONSTRATION=False
     hidden_dim = 512
-    rewards     = [0]
-    predict_qs  = []
-    action_range = 0.2
+    model_path = './model/sac_v2_multi'
 
+    sac_trainer=SAC_Trainer(replay_buffer, hidden_dim=hidden_dim, action_range=action_range )
 
-    sac_trainer=SAC_Trainer(replay_buffer, hidden_dim=hidden_dim, action_range=action_range  )
-    
     if args.train:
-        sac_trainer.load_model( model_path)
 
-        # training loop
-        for ep in range(max_episodes):
-            env.reset()
-            target_x,target_y,target_z = env.randomly_place_target()
-            vs, s = env.get_robot_state()  # fisrt dim is visual, second dim is numerical
-            episode_reward = 0
-            predict_q = 0
-            
-            
-            for step in range(max_steps):
-                if ep > explore_eps:
-                    a = sac_trainer.policy_net.get_action(s, deterministic = DETERMINISTIC)
-                else:
-                    a = sac_trainer.policy_net.sample_action()
-                env.set_control(a)
-                env.step()
-                vs_, s_ = env.get_robot_state()
-                r,done = env.get_reward_and_done(s_)   
-                # print('action: ', a)
-                replay_buffer.push(s, a, r, s_, done)
-                
-                s = s_
-                episode_reward += r
-                
-                
-                if len(replay_buffer) > batch_size:
-                    for i in range(update_itr):
-                        predict_q=sac_trainer.update(batch_size, reward_scale=10., use_demonstration = USE_DEMONSTRATION, auto_entropy=AUTO_ENTROPY, target_entropy=-1.*action_dim)
-    
-                if done:
-                    break
-                
-            if ep % 10 == 0:
+        # share the global parameters in multiprocessing
+        sac_trainer.soft_q_net1.share_memory() 
+        sac_trainer.soft_q_net2.share_memory()
+        sac_trainer.target_soft_q_net1.share_memory()
+        sac_trainer.target_soft_q_net2.share_memory()
+        sac_trainer.policy_net.share_memory()
+        sac_trainer.log_alpha.share_memory_()
+        ShareParameters(sac_trainer.soft_q_optimizer1)
+        ShareParameters(sac_trainer.soft_q_optimizer2)
+        ShareParameters(sac_trainer.policy_optimizer)
+        ShareParameters(sac_trainer.alpha_optimizer)
+
+        rewards_queue=mp.Queue()  # used for get rewards from all processes and plot the curve
+
+        num_workers=2  # or: mp.cpu_count()
+        processes=[]
+        rewards=[]
+
+        for i in range(num_workers):
+            process = Process(target=worker, args=(i, sac_trainer, ENV, rewards_queue, replay_buffer, max_episodes, max_steps, batch_size, explore_steps, \
+            update_itr, AUTO_ENTROPY, DETERMINISTIC, hidden_dim, model_path))  # the args contain shared and not shared
+            process.daemon=True  # all processes closed when the main stops
+            processes.append(process)
+
+        [p.start() for p in processes]
+        while True:  # keep geting the episode reward from the queue
+            r = rewards_queue.get()
+            if r is not None:
+                rewards.append(r)
+            else:
+                break
+
+            if len(rewards)%20==0 and len(rewards)>0:
                 plot(rewards)
-                sac_trainer.save_model( model_path)
-                
-            print('Episode: ', ep, '| Episode Reward: ', episode_reward, '| Episode Length: ', step)
-            # plot the running mean instead of raw values
-            rewards.append(0.95*np.mean(rewards)+0.05*episode_reward)
-        predict_qs.append(predict_q)
-    
+
+        [p.join() for p in processes]  # finished at the same time
+
+        sac_trainer.save_model(model_path)
 
     if args.test:
-        sac_trainer.load_model( model_path)
-
-        for ep in range(max_episodes):
-            env.reset()
-            target_x,target_y,target_z = env.randomly_place_target()
-            vs, s = env.get_robot_state()  # fisrt dim is visual, second dim is numerical
+        # single process for testing
+        sac_trainer.load_model(model_path)
+        for eps in range(10):
+            visual_state, state =  env.reset()
             episode_reward = 0
-            predict_q = 0
-            
-            
-            for step in range(max_steps):
-                # if frame_idx > explore_steps:
-                #     a = sac_trainer.policy_net.get_action(s, deterministic = DETERMINISTIC)
-                # else:
-                a = sac_trainer.policy_net.sample_action()
-                env.set_control(a)
-                env.step()
-                vs_, s_ = env.get_robot_state()
-                r,done = env.get_reward_and_done(s_)   
-                    
-                # replay_buffer.push(s, a, r, s_, done)
-                
-                s = s_
-                episode_reward += r
-                
-                
-                # if len(replay_buffer) > batch_size:
-                #     for i in range(update_itr):
-                #         predict_q=sac_trainer.update(batch_size, reward_scale=10., auto_entropy=AUTO_ENTROPY, target_entropy=-1.*action_dim)
-                
-                # if frame_idx % 100 == 0:
-                #     plot(frame_idx, rewards, predict_qs)
-                    # sac_trainer.save_model( model_path)
-                
-                if done:
-                    break
 
-                
-            print('Episode: ', ep, '| Episode Reward: ', episode_reward)
-            rewards.append(episode_reward)
-        predict_qs.append(predict_q)
+            for step in range(max_steps):
+                action = sac_trainer.policy_net.get_action(state, deterministic = DETERMINISTIC)
+                next_visual_state, next_state, reward, done = env.step(action)  
+
+                episode_reward += reward
+                state=next_state
+
+            print('Episode: ', eps, '| Episode Reward: ', episode_reward)
