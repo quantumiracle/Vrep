@@ -61,8 +61,8 @@ class VrepSawyer:
         #     vrep_path = "/home/clay/masters/V-REP_PRO_EDU_V3_6_1_Ubuntu18_04/vrep.sh"
         # else:
         #     vrep_path = "/homes/sc6918/masters/V-REP_PRO_EDU_V3_6_1_Ubuntu18_04/vrep.sh"
-        # vrep_path = "/homes/zd2418/Software/V-REP_PLAYER_V3_6_1_Ubuntu18_04/vrep.sh"
-        vrep_path = "/home/quantumiracle/Software/v-rep3.6.2/V-REP_PRO_EDU_V3_6_2_Ubuntu18_04/vrep.sh"
+        vrep_path = "/homes/zd2418/Software/V-REP_PLAYER_V3_6_1_Ubuntu18_04/vrep.sh"
+        # vrep_path = "/home/quantumiracle/Software/v-rep3.6.2/V-REP_PRO_EDU_V3_6_2_Ubuntu18_04/vrep.sh"
         parent_dir = os.path.abspath(os.path.join("..", os.pardir))
         args = [vrep_path, remote_api_string, quit_when_finish_string]
         if headless_mode:

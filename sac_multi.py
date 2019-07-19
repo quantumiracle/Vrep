@@ -327,14 +327,14 @@ class SAC_Trainer():
         self.policy_net.eval()
 
 
-def worker(id, sac_trainer, ENV, rewards_queue, replay_buffer, max_episodes, max_steps, batch_size, explore_steps, \
+def worker(id, sac_trainer, rewards_queue, replay_buffer, max_episodes, max_steps, batch_size, explore_steps, \
             update_itr, AUTO_ENTROPY, DETERMINISTIC, hidden_dim, model_path):
     '''
     the function for sampling with multi-processing
     '''
 
     print(sac_trainer, replay_buffer)  # sac_tainer are not the same, but all networks and optimizers in it are the same; replay  buffer is the same one.
-    env = Sawyer(id=id+2)
+    env = Sawyer(id=id+2, headless_mode=True)  # needs to configure different port_number for calling different Vrep env at the same time
 
     action_dim = env.action_space.shape[0]
     state_dim  = env.observation_space.shape[0]
@@ -424,7 +424,7 @@ if __name__ == '__main__':
 
 
     # choose env
-    env = Sawyer()
+    env = Sawyer(headless_mode=True)
 
     action_dim = env.action_space.shape[0]
     state_dim  = env.observation_space.shape[0]
@@ -434,6 +434,7 @@ if __name__ == '__main__':
     max_episodes  = 100000
     max_steps   = 20 
     explore_steps = 200  # for random action sampling in the beginning of training
+    batch_size=128
     update_itr = 1
     AUTO_ENTROPY=True
     DETERMINISTIC=False
@@ -463,8 +464,8 @@ if __name__ == '__main__':
         rewards=[]
 
         for i in range(num_workers):
-            process = Process(target=worker, args=(i, sac_trainer, ENV, rewards_queue, replay_buffer, max_episodes, max_steps, batch_size, explore_steps, \
-            update_itr, AUTO_ENTROPY, DETERMINISTIC, hidden_dim, model_path))  # the args contain shared and not shared
+            process = Process(target=worker, args=(i, sac_trainer, rewards_queue, replay_buffer, max_episodes, max_steps, \
+            batch_size, explore_steps, update_itr, AUTO_ENTROPY, DETERMINISTIC, hidden_dim, model_path))  # the args contain shared and not shared
             process.daemon=True  # all processes closed when the main stops
             processes.append(process)
 
