@@ -378,7 +378,7 @@ def worker(id, sac_trainer, rewards_queue, replay_buffer, max_episodes, max_step
             
             if done:
                 break
-        print('Episode: ', eps, '| Episode Reward: ', episode_reward)
+        print('Worker: ', id, '| Episode: ', eps, '| Episode Reward: ', episode_reward)
         if len(rewards) == 0: rewards.append(episode_reward)
         else: rewards.append(rewards[-1]*0.9+episode_reward*0.1)
         rewards_queue.put(episode_reward)
@@ -459,9 +459,9 @@ if __name__ == '__main__':
 
         rewards_queue=mp.Queue()  # used for get rewards from all processes and plot the curve
 
-        num_workers=2  # or: mp.cpu_count()
+        num_workers=5  # or: mp.cpu_count()
         processes=[]
-        rewards=[]
+        rewards=[0]
 
         for i in range(num_workers):
             process = Process(target=worker, args=(i, sac_trainer, rewards_queue, replay_buffer, max_episodes, max_steps, \
@@ -473,7 +473,7 @@ if __name__ == '__main__':
         while True:  # keep geting the episode reward from the queue
             r = rewards_queue.get()
             if r is not None:
-                rewards.append(r)
+                rewards.append(0.9*rewards[-1]+0.1*r)  # moving average of episode rewards
             else:
                 break
 
@@ -486,6 +486,7 @@ if __name__ == '__main__':
 
     if args.test:
         # single process for testing
+        env = Sawyer(headless_mode=False, id=1)  # need a new one here
         sac_trainer.load_model(model_path)
         for eps in range(10):
             visual_state, state =  env.reset()
@@ -497,5 +498,8 @@ if __name__ == '__main__':
 
                 episode_reward += reward
                 state=next_state
+
+                if done:
+                    break
 
             print('Episode: ', eps, '| Episode Reward: ', episode_reward)
