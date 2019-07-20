@@ -313,7 +313,7 @@ class SAC_Trainer():
         return predicted_new_q_value.mean()
 
     def save_model(self, path):
-        torch.save(self.soft_q_net1.state_dict(), path+'_q1')
+        torch.save(self.soft_q_net1.state_dict(), path+'_q1')  # have to specify different path name here!
         torch.save(self.soft_q_net2.state_dict(), path+'_q2')
         torch.save(self.policy_net.state_dict(), path+'_policy')
 
@@ -485,6 +485,7 @@ if __name__ == '__main__':
         sac_trainer.save_model(model_path)
 
     if args.test:
+        env = Sawyer(headless_mode=False)  # for visualizing in test
         # single process for testing
         env = Sawyer(headless_mode=False, id=1)  # need a new one here
         sac_trainer.load_model(model_path)
