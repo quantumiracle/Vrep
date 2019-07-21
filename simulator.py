@@ -151,7 +151,11 @@ class Simulator:
         end_effector_orientation = self.r_.get_endpoint_orientation()
         target = self.r_.get_target_location()
         target_orientation = self.r_.get_target_orientation()
-        distance = target-end_effector
+        try:
+            distance = target-end_effector
+        except:
+            print("Distance Error!")
+            distance=10.0
         grasp = self.r_.hand_is_closed
         has_target = self.r_.holding_the_target()
 
@@ -286,15 +290,15 @@ class Simulator:
         if(target[2] > self.DONE_DISTANCE and self.r_.holding_the_target()):
             reward += 50.0
             print('Get The Goal!')
-            
+        # print(self.r_.terminate_episode)
         if self.r_.terminate_episode > 0:
-            done = True
+            # done = True
 #             self.lifting_up = False
-#             if(target[2] > self.DONE_DISTANCE and self.r_.holding_the_target()):
-#                 reward += 10.0
-#             else:
-# #                print("simulator: wrong termination, rewarded -1",target[2],",",self.r_.holding_the_target())
-#                 reward -=10
+            if(target[2] > self.DONE_DISTANCE and self.r_.holding_the_target()):
+                reward += 10.0
+            else:
+#                print("simulator: wrong termination, rewarded -1",target[2],",",self.r_.holding_the_target())
+                reward -=5
         return reward, done
 
 

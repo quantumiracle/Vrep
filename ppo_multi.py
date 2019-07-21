@@ -24,7 +24,7 @@ from sawyer_wrapper import Sawyer
 
 EP_MAX = 1000000
 EP_LEN = 20
-N_WORKER = 3                # parallel workers
+N_WORKER = 5                # parallel workers
 GAMMA = 0.9                 # reward discount factor
 A_LR = 0.0001               # learning rate for actor
 C_LR = 0.0002               # learning rate for critic
@@ -119,7 +119,7 @@ class PPO(object):
             l1 = tf.layers.dense(self.tfs, 200, tf.nn.tanh, trainable=trainable)
             l2 = tf.layers.dense(l1, 200, tf.nn.tanh, trainable=trainable)
             l3 = tf.layers.dense(l2, 200, tf.nn.tanh, trainable=trainable)
-            action_scale = 1.0
+            action_scale = 0.2
             mu = action_scale * tf.layers.dense(l3, A_DIM, tf.nn.tanh, trainable=trainable)
             sigma = tf.layers.dense(l3, A_DIM, tf.nn.softplus, trainable=trainable)
             sigma +=1e-1 # without this line, 0 value sigma may cause NAN action
@@ -161,7 +161,7 @@ class Worker(object):
     def work(self):
         global GLOBAL_EP, GLOBAL_RUNNING_R, GLOBAL_UPDATE_COUNTER
         step_set=[]
-        epr_set=[]
+        epr_set=[0]
         step=0
 
         while not COORD.should_stop():
@@ -222,15 +222,28 @@ class Worker(object):
             print('{0:.1f}%'.format(GLOBAL_EP/EP_MAX*100), '|W%i' % self.wid,  '|Ep_r: %.2f' % ep_r,)
             step_set.append(step)
             # print(step)
-            epr_set.append(ep_r)
-            if step % 10==0:  # plot every N episode; some error about main thread for plotting
-                plt.plot(step_set,epr_set)  # no moving average
-                plt.ylim(0, 100)
-                try:
-                    plt.savefig('./ppo_multi.png')
-                except:
-                    print('writing conflict!')
+
+            # epr_set.append(ep_r)  # moving average
+            # if step % 10==0:  # plot every N episode; some error about main thread for plotting
+            #     plt.plot(step_set,epr_set)  # no moving average
+            #     plt.ylim(0, 100)
+            #     try:
+            #         plt.savefig('./ppo_multi.png')
+            #     except:
+            #         print('writing conflict!')
+
+
+            if GLOBAL_EP%20==0:
+                plot(GLOBAL_RUNNING_R)
                 
+def plot(rewards):
+    # clear_output(True)
+    plt.figure(figsize=(20,5))
+    plt.plot(rewards)
+    plt.savefig('ppo_multi.png')
+    # plt.show()
+    plt.clf()
+
 
 
 
@@ -238,7 +251,7 @@ if __name__ == '__main__':
     model_path = './model/ppo_multi'
     if args.train:
         GLOBAL_PPO = PPO()
-        GLOBAL_PPO.load(model_path)
+        # GLOBAL_PPO.load(model_path)
         UPDATE_EVENT, ROLLING_EVENT = threading.Event(), threading.Event()
         UPDATE_EVENT.clear()            # not update now
         ROLLING_EVENT.set()             # start to roll out
@@ -275,18 +288,20 @@ if __name__ == '__main__':
         GLOBAL_PPO.save(model_path)
 
     if args.test:
-        env = Sawyer(headless=False) 
+        env = Sawyer(headless_mode=False) 
         GLOBAL_PPO = PPO()
         GLOBAL_PPO.load(model_path)
         test_episode = 10
+        episode_reward = 0
         
 
-        for _ in range(test_episode):
+        for eps in range(test_episode):
             vs, s = env.reset()
  
             for t in range(EP_LEN):
                 vs, s, r, done = env.step(GLOBAL_PPO.choose_action(s))
-                print(r)
+                episode_reward+=r
      
+            print('Episode: ', eps, '| Episode Reward: ', episode_reward)
 
 

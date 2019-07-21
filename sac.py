@@ -261,7 +261,6 @@ class SAC_Trainer():
         action     = torch.FloatTensor(action).to(device)
         reward     = torch.FloatTensor(reward).unsqueeze(1).to(device)  # reward is single value, unsqueeze() to add one dim to be [reward] at the sample dim;
         done       = torch.FloatTensor(np.float32(done)).unsqueeze(1).to(device)
-
         if use_demonstration: 
             # sample from demonstration data
             with gzip.open('dataset/replay_02.gz', 'rb') as handle:

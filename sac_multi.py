@@ -338,7 +338,7 @@ def worker(id, sac_trainer, rewards_queue, replay_buffer, max_episodes, max_step
 
     action_dim = env.action_space.shape[0]
     state_dim  = env.observation_space.shape[0]
-    action_range=1.
+    action_range=0.2
 
 
     # training loop
@@ -428,13 +428,13 @@ if __name__ == '__main__':
 
     action_dim = env.action_space.shape[0]
     state_dim  = env.observation_space.shape[0]
-    action_range=1.
+    action_range=0.2
 
     # hyper-parameters for RL training, no need for sharing across processes
     max_episodes  = 100000
     max_steps   = 20 
     explore_steps = 200  # for random action sampling in the beginning of training
-    batch_size=128
+    batch_size=640
     update_itr = 1
     AUTO_ENTROPY=True
     DETERMINISTIC=False
@@ -485,7 +485,6 @@ if __name__ == '__main__':
         sac_trainer.save_model(model_path)
 
     if args.test:
-        env = Sawyer(headless_mode=False)  # for visualizing in test
         # single process for testing
         env = Sawyer(headless_mode=False, id=1)  # need a new one here
         sac_trainer.load_model(model_path)
